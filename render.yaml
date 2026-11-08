@@ -7,4 +7,4 @@ services:
     staticPublishPath: frontend/dist
     envVars:
       - key: VITE_API_URL
-          value: https://safehaven-pay-api.onrender.com
+        value: https://safehaven-pay-api.onrender.com

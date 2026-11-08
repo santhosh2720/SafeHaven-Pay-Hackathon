@@ -47,4 +47,4 @@ The live adapter follows the official PayPal REST sequence: create an order with
 
 When PayPal and LLM credentials are configured, the sandbox payment and AI explanation paths are live. Without them, the UI uses clearly labelled demo-safe and deterministic fallbacks. Risk labels are represented from synthetic named features for the hackathon. Carrier events are simulator calls to the signed endpoint. The mandate token is SafeHaven Pay's own demo design, not a PayPal standard.
 
-PayPal marks are used for the payment integration context and remain PayPal property. SafeHaven Pay is an independent hackathon prototype and does not imply PayPal sponsorship or endorsement.
+SafeHaven Pay uses its own visual mark. PayPal is referenced only as the payment integration used by this independent hackathon prototype; the project does not imply PayPal sponsorship or endorsement.
