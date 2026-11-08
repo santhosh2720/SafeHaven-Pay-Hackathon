@@ -26,6 +26,23 @@ class PayPalAdapter:
             r = await client.post(f'{self.base}/v2/checkout/orders', json={'intent':'AUTHORIZE','purchase_units':[{'amount':{'currency_code':currency,'value':f'{amount:.2f}'},'description':description}]}, headers={'Authorization':f'Bearer {token}','Content-Type':'application/json','PayPal-Request-Id':str(uuid.uuid4())})
             r.raise_for_status(); return r.json()
 
+    async def authorize_order(self, order_id: str) -> dict[str, Any]:
+        """Authorize an approved PayPal checkout order and return the real authorization."""
+        if not self.live:
+            return {'id': f'DEMO-AUTH-{uuid.uuid4().hex[:10].upper()}', 'status': 'AUTHORIZED', 'demo': True}
+        token = await self.token()
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.post(
+                f'{self.base}/v2/checkout/orders/{order_id}/authorize',
+                headers={
+                    'Authorization': f'Bearer {token}',
+                    'Content-Type': 'application/json',
+                    'PayPal-Request-Id': str(uuid.uuid4()),
+                },
+            )
+            r.raise_for_status()
+            return r.json()
+
     async def capture(self, authorization_id: str, amount: float) -> dict[str, Any]:
         if not self.live: return {'id':f'DEMO-CAP-{uuid.uuid4().hex[:10].upper()}','status':'COMPLETED','demo':True}
         token = await self.token()

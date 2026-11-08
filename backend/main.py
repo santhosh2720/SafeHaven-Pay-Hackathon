@@ -4,10 +4,11 @@ from pydantic import BaseModel
 from datetime import datetime, timezone, timedelta
 import hashlib, hmac, json, os, random, uuid
 from .paypal import PayPalAdapter
+from .ai import RiskAI
 
 app=FastAPI(title='SafeHaven Pay API', version='1.0.0')
 app.add_middleware(CORSMiddleware, allow_origins=['*'], allow_methods=['*'], allow_headers=['*'])
-paypal=PayPalAdapter(); orders=[]; pools=[]; proposals=[]; telemetry=[]; evidence=[]; failure_mode=None
+paypal=PayPalAdapter(); risk_ai=RiskAI(); orders=[]; pools=[]; proposals=[]; telemetry=[]; evidence=[]; failure_mode=None; tamper_mode=False
 
 @app.get('/')
 def root():
@@ -47,7 +48,13 @@ class CreateOrder(BaseModel): amount: float=49.99; agent_originated: bool=False;
 class Event(BaseModel): order_id: str; event_type: str='DELIVERED'; payload: dict={}
 
 @app.get('/healthz')
-def healthz(): return {'status':'ok','paypal_mode':'sandbox-live' if paypal.live else 'demo-safe','orders':len(orders)}
+def healthz():
+    return {
+        'status':'ok',
+        'paypal_mode':'sandbox-live' if paypal.live else 'demo-safe',
+        'ai_mode':'provider-connected' if risk_ai.live else 'deterministic-fallback',
+        'orders':len(orders),
+    }
 
 @app.get('/v1/dashboard')
 def dashboard():
@@ -57,7 +64,18 @@ def dashboard():
 @app.post('/v1/checkout/orders')
 async def create_order(req:CreateOrder):
     pp=await paypal.create_authorization_order(req.amount)
-    oid=f'PG-{uuid.uuid4().hex[:8].upper()}'; f=make_features(req.amount,req.agent_originated,req.risk_hint); sc=score_order(f); decision='CAPTURE' if sc<.35 else 'POOL'; order={'id':oid,'amount':req.amount,'currency':'USD','paypal_order_id':pp['id'],'authorization_id':f'AUTH-{uuid.uuid4().hex[:12].upper()}','state':'AUTHORIZED','score':sc,'decision':decision,'features':f,'reason':rationale(f,sc),'source':'agent' if req.agent_originated else 'human','created_at':now(),'demo':pp.get('demo',False)}; orders.insert(0,order); add_evidence(oid,'AUTHORIZED',{'paypal_order_id':pp['id']}); return order
+    oid=f'PG-{uuid.uuid4().hex[:8].upper()}'; f=make_features(req.amount,req.agent_originated,req.risk_hint); sc=score_order(f); decision='CAPTURE' if sc<.35 else 'POOL'; fallback_reason=rationale(f,sc); ai=await risk_ai.explain(f,sc,fallback_reason); order={'id':oid,'amount':req.amount,'currency':'USD','paypal_order_id':pp['id'],'approval_url':next((x['href'] for x in pp.get('links',[]) if x.get('rel')=='approve'),None),'authorization_id':None,'state':'CREATED','score':sc,'decision':decision,'features':f,'reason':ai['reason'],'reason_provider':ai['provider'],'reason_model':ai['model'],'source':'agent' if req.agent_originated else 'human','created_at':now(),'demo':pp.get('demo',False)}; orders.insert(0,order); add_evidence(oid,'CREATED',{'paypal_order_id':pp['id'],'reason_provider':ai['provider']}); return order
+
+@app.post('/v1/checkout/orders/{order_id}/authorize')
+async def authorize_checkout(order_id:str):
+    order=next((o for o in orders if o['id']==order_id),None)
+    if not order: raise HTTPException(404,'Order not found')
+    result=await paypal.authorize_order(order['paypal_order_id'])
+    authorization=((result.get('purchase_units') or [{}])[0].get('payments') or {}).get('authorizations') or []
+    order['authorization_id']=(authorization[0].get('id') if authorization else result.get('id'))
+    order['state']='AUTHORIZED'; order['demo']=result.get('demo',False)
+    add_evidence(order_id,'AUTHORIZED',{'paypal_order_id':order['paypal_order_id'],'authorization_id':order['authorization_id']})
+    return order
 
 @app.post('/v1/orders/{order_id}/finalize')
 async def finalize(order_id:str):
@@ -65,11 +83,16 @@ async def finalize(order_id:str):
     if not order: raise HTTPException(404,'Order not found')
     if failure_mode=='paypal_timeout': order['state']='PENDING_RECONCILE'; return order
     fallback=3 if failure_mode=='model' else (1 if failure_mode=='llm' else 0); order['fallback_level']=fallback
+    if order['authorization_id'] is None:
+        result=await paypal.authorize_order(order['paypal_order_id'])
+        authorization=((result.get('purchase_units') or [{}])[0].get('payments') or {}).get('authorizations') or []
+        order['authorization_id']=(authorization[0].get('id') if authorization else result.get('id'))
+        order['state']='AUTHORIZED'
     if order['decision']=='CAPTURE':
         result=await paypal.capture(order['authorization_id'],order['amount']); order['capture_id']=result.get('id'); order['state']='CAPTURED'; add_evidence(order_id,'CAPTURED',result)
     else:
         order['state']='POOLED'; pool={'id':f'POOL-{order_id[3:]}','order_id':order_id,'amount':order['amount'],'status':'OPEN','release_at':(datetime.now(timezone.utc)+timedelta(days=2)).isoformat()}; pools.insert(0,pool); add_evidence(order_id,'POOLED',{'score':order['score']})
-    telemetry.insert(0,{'run_id':f'run_{uuid.uuid4().hex[:8]}','agent':'Risk Agent','order_id':order_id,'model':'gradient-boosting','fallback_level':fallback,'latency_ms':random.randint(80,360),'status':'completed','created_at':now()}); return order
+    telemetry.insert(0,{'run_id':f'run_{uuid.uuid4().hex[:8]}','agent':'Risk Agent','order_id':order_id,'model':order.get('reason_model','rules-fallback'),'provider':order.get('reason_provider','deterministic-risk-engine'),'fallback_level':fallback,'latency_ms':random.randint(80,360),'status':'completed','created_at':now()}); return order
 
 @app.post('/v1/pools/{pool_id}/proposals')
 def propose(pool_id:str, action:str='release'):
@@ -91,12 +114,20 @@ def carrier(req:Event, x_signature:str|None=Header(default=None)):
 
 @app.get('/v1/chain/verify')
 def verify():
+    if tamper_mode:
+        return {'valid':False,'broken_index':0,'reason':'Demo tamper flag is active'}
     prev='GENESIS'
     for i,item in enumerate(evidence):
         body={'order_id':item['order_id'],'type':item['type'],'payload':item['payload'],'timestamp':item['timestamp']}; expected=hashlib.sha256((prev+json.dumps(body,sort_keys=True)).encode()).hexdigest()
         if item['prev_hash']!=prev or item['hash']!=expected: return {'valid':False,'broken_index':i}
         prev=item['hash']
     return {'valid':True,'events':len(evidence)}
+
+@app.post('/v1/demo/tamper/{mode}')
+def tamper(mode:str):
+    global tamper_mode
+    tamper_mode = mode == 'on'
+    return {'tamper_mode':tamper_mode,'verification':verify()}
 
 @app.post('/v1/demo/fail/{mode}')
 def fail(mode:str):
