@@ -1,0 +1,9 @@
+services:
+  - type: static
+    name: safehaven-pay-dashboard
+    branch: main
+    buildCommand: cd frontend && npm install && npm run build
+    staticPublishPath: frontend/dist
+    envVars:
+      - key: VITE_API_URL
+        value: https://safehaven-pay-hackathon-1.onrender.com
