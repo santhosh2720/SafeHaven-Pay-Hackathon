@@ -1,5 +1,5 @@
 import React,{useEffect,useState} from 'react';import{createRoot}from'react-dom/client';import{Activity,AlertTriangle,ArrowUpRight,Bot,CheckCircle2,ChevronRight,Clock3,Command,Database,FileCheck2,FlaskConical,Layers3,LockKeyhole,Play,RefreshCw,ShieldCheck,Sparkles,WalletCards,Zap}from'lucide-react';import'./styles.css';
-const API=(import.meta.env.VITE_API_URL||'https://safehaven-pay-api.onrender.com').replace(/\/$/,'');
+const API='https://safehaven-pay-api.onrender.com';
 const fallbackDashboard={orders:[],pools:[],proposals:[],telemetry:[],evidence:[],metrics:{captured:0,pooled:0,held_pct:0,available_pct:100,precision:.94,recall:.89,paypal_live:false}};
 async function getDashboard(){
   const controller=new AbortController();
