@@ -1,5 +1,6 @@
 services:
-  - type: static
+  - type: web
+    runtime: static
     name: safehaven-pay-dashboard
     branch: main
     buildCommand: cd frontend && npm install && npm run build
