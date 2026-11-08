@@ -18,7 +18,7 @@ class PayPalAdapter:
             r.raise_for_status()
             return r.json()['access_token']
 
-    async def create_authorization_order(self, amount: float, currency='USD', description='PoolGuard protected order') -> dict[str, Any]:
+    async def create_authorization_order(self, amount: float, currency='USD', description='SafeHaven Pay protected order') -> dict[str, Any]:
         if not self.live:
             return {'id': f'DEMO-{uuid.uuid4().hex[:10].upper()}', 'status':'CREATED', 'demo':True, 'links':[]}
         token = await self.token()

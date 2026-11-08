@@ -5,9 +5,19 @@ from datetime import datetime, timezone, timedelta
 import hashlib, hmac, json, os, random, uuid
 from .paypal import PayPalAdapter
 
-app=FastAPI(title='PoolGuard API', version='1.0.0')
+app=FastAPI(title='SafeHaven Pay API', version='1.0.0')
 app.add_middleware(CORSMiddleware, allow_origins=['*'], allow_methods=['*'], allow_headers=['*'])
 paypal=PayPalAdapter(); orders=[]; pools=[]; proposals=[]; telemetry=[]; evidence=[]; failure_mode=None
+
+@app.get('/')
+def root():
+    return {
+        'service': 'SafeHaven Pay API',
+        'status': 'online',
+        'message': 'Isolate the risk. Free the rest.',
+        'docs': '/docs',
+        'health': '/healthz',
+    }
 
 def now(): return datetime.now(timezone.utc).isoformat()
 def make_features(amount, agent=False, risk_hint=None):
